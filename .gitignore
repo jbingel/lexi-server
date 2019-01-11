@@ -1,0 +1,7 @@
+logs/*
+build/*
+lexi-venv/*
+models/*
+*.pyc
+trash/
+.idea
