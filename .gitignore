@@ -5,3 +5,4 @@ models/*
 *.pyc
 trash/
 .idea
+lexi.cfg
