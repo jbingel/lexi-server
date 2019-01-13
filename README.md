@@ -2,6 +2,9 @@
 
 ## Changelog
 
+### Version 0.2.5
++ more general database error handling
+
 ### Version 0.2.4
 + bugfix in Database connection: rollback connection at error
 

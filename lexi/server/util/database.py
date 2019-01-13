@@ -34,10 +34,7 @@ class DatabaseConnection:
             if log:
                 logger.info("PSQL query: " + query)
             self.cursor.execute(query)
-        except psycopg2.OperationalError:
-            self.pg_connection.rollback()
-            raise DatabaseConnectionError()
-        except psycopg2.ProgrammingError:
+        except psycopg2.Error:
             self.pg_connection.rollback()
             raise DatabaseConnectionError()
 
