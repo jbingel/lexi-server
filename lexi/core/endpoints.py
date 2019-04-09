@@ -35,7 +35,7 @@ def process_html_structured(classifier, html, ranker, parId):
     spanId = 0
     if not html.strip():
         return html
-    output_sents = classifier.predict_text(html, ranker)
+    output_sents = classifier.simplify_text(html, ranker)
     for original, simple in zip(*output_sents):
         simple_parsed = parser.parse_sent(simple)
         logger.debug([simple_parsed, simple.replace('\n', ''), parser])
@@ -64,17 +64,18 @@ def process_html_structured(classifier, html, ranker, parId):
     return " ".join(html_out), simplifications
 
 
-def process_html_lexical(classifier, html, startOffset, endOffset, ranker,
+def process_html_lexical(pipeline, html, startOffset, endOffset, cwi, ranker,
                          requestId=0, min_similarity=0.7,
                          blacklist=None):
     """
     Transforms HMTL source, enriching simplified words with core markup by
     separating markup from text and sending pure text to simplification class.
 
-    :param classifier: Simplification classifier instance
+    :param pipeline: Simplification pipeline instance
     :param html: Input HTML source
     :param startOffset: offset after which simplifications are solicited
     :param endOffset: offset until which simplifications are solicited
+    :param cwi: personalized CWI module
     :param ranker: personalized ranker
     :param requestId: Request identifier to disambiguate core simplification
     targets across multiple calls to this method
@@ -115,8 +116,8 @@ def process_html_lexical(classifier, html, startOffset, endOffset, ranker,
     # output is a sequence of tokens including whitespaces, id2simplification
     # is a dict mapping token IDs to simplifications, if applicable
     offset2html, pure_text = util.filter_html(html)
-    offset2simplification = classifier.predict_text(
-        pure_text, startOffset, endOffset, ranker,
+    offset2simplification = pipeline.simplify_text(
+        pure_text, startOffset, endOffset, cwi=cwi, ranker=ranker,
         min_similarity=min_similarity, blacklist=blacklist)
     logger.debug("Simplifying text between character offsets {} "
                  "and {}: {}".format(startOffset, endOffset, pure_text))
@@ -130,11 +131,12 @@ def process_html_lexical(classifier, html, startOffset, endOffset, ranker,
             html_out += "".join(offset2html[i])
         if i in offset2simplification and not open_hyperlinks_count > 0:
             # checking for hyperlinks because we don't want to simplify those
-            original, simple, sentence, word_index = offset2simplification[i]
+            original, replacements, \
+                sentence, word_index = offset2simplification[i]
             # in future, possibly get more alternatives, and possibly return
             # in some other order
-            choices = [original, simple]
-            simple = util.escape(simple)
+            replacements = [util.escape(r) for r in replacements]
+            choices = [original] + replacements
             spanId += 1
             elemId = "lexi_{}_{}".format(requestId, spanId)
             displaying_original = "true" if choices[0] == original else "false"
@@ -151,7 +153,7 @@ def process_html_lexical(classifier, html, startOffset, endOffset, ranker,
                 {elemId: {
                     "request_id": requestId,
                     "original": original, 
-                    "simple": simple,  # legacy for frontend version <= 0.2
+                    "simple": replacements,  # legacy for frontend version <= 0.2
                     "choices": choices,
                     "bad_feedback": False,
                     "selection": 0,
@@ -168,6 +170,7 @@ def process_html_lexical(classifier, html, startOffset, endOffset, ranker,
     return html_out, simplifications
 
 
+# TODO adapt to new structure
 def update_classifier(classifier, feedback):
     """
     Featurizes simplification feedback from user and updates classifier
@@ -191,6 +194,7 @@ def update_classifier(classifier, feedback):
         classifier.featurize_train(xs, ys)
 
 
+# TODO adapt to new structure
 def update_ranker(ranker, user_id, feedback, overall_rating=0):
     """
     Collects feedback and updates ranker

@@ -6,3 +6,4 @@ models/*
 trash/
 .idea
 lexi.cfg
+lexi/res/*

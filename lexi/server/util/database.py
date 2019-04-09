@@ -1,6 +1,7 @@
 import psycopg2
 import logging
 import json
+# import MySQLdb
 from collections import defaultdict
 
 logger = logging.getLogger('lexi')
@@ -8,9 +9,12 @@ logger = logging.getLogger('lexi')
 
 class DatabaseConnection:
 
-    def __init__(self, kwargs):
+    def __init__(self, kwargs, type="postgres"):
         try:
-            self.pg_connection = psycopg2.connect(**kwargs)
+            if type == "postgres":
+                self.pg_connection = psycopg2.connect(**kwargs)
+            # elif type == "mysql":
+            #     self.pg_connection = MySQLdb.connect(**kwargs)
             self.cursor = self.pg_connection.cursor()
             logger.info("Connected to database '{}' at '{}'.".format(
                 kwargs["dbname"], kwargs["host"]

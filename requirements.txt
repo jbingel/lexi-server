@@ -37,7 +37,7 @@ scipy==0.19.1
 singledispatch==3.4.0.3
 six==1.10.0
 smart-open==1.5.3
-spacy==2.0.18
+stanfordnlp==0.1.1
 thinc==6.12.1
 toolz==0.8.2
 tqdm==4.29.0
@@ -47,3 +47,4 @@ wcwidth==0.1.7
 webencodings==0.5.1
 Werkzeug==0.12.2
 wrapt==1.10.11
+git+https://github.com/jbingel/rippletagger.git

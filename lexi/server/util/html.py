@@ -24,12 +24,13 @@ def map_text_to_html_offsets(html_src):
     return mapping
 
 
-def process_html(classifier, html_src, startOffset, endOffset, ranker,
+def process_html(pipeline, html_src, startOffset, endOffset, cwi, ranker,
                  mode="lexical", requestId=0, min_similarity=0.7,
                  blacklist=None):
     """
-    :param classifier:
+    :param pipeline:
     :param html_src: The HTML source in question
+    :param ranker: CWI module to use with this classifier
     :param ranker: Ranker to use with this classifier
     :param mode: simplification mode (whether to perform lexical simplification,
      sentence simplification, ...). Only "lexical" accepted for now.
@@ -43,7 +44,8 @@ def process_html(classifier, html_src, startOffset, endOffset, ranker,
     html_out = ""
     if mode == "lexical":
         _output, _simplifications = process_html_lexical(
-            classifier, html_src, startOffset, endOffset, requestId=requestId,
+            pipeline, html_src, startOffset, endOffset, requestId=requestId,
+            cwi=cwi,
             ranker=ranker,
             min_similarity=min_similarity,
             blacklist=blacklist)

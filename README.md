@@ -2,6 +2,11 @@
 
 ## Changelog
 
+
+### Version 0.3
++ no more pickling!
++ POS-based synonym selection
+
 ### Version 0.2.5
 + more general database error handling
 

@@ -1,115 +1,69 @@
 import logging
 import pickle
+import os
 
-from lexi.config import RESOURCES, LEXICAL_MODEL_PATH_TEMPLATE
-from lexi.core.simplification import Classifier
-from lexi.core.featurize.featurizers import LexicalFeaturizer
+from lexi.config import LEXICAL_MODEL_PATH_TEMPLATE, RANKER_MODEL_PATH_TEMPLATE
+from lexi.core.simplification import SimplificationPipeline
+from lexi.core.simplification.util import make_synonyms_dict, \
+    parse_embeddings
+from lexi.core.featurize.featurizers import LexicalFeaturizer, LexiFeaturizer
 from lexi.core.util import util
-from lexi.lib.lexenstein.features import FeatureEstimator
-from lexi.lib.lib import LexensteinGenerator, BoundaryRanker, BoundarySelector,\
-    OnlineRegressionRanker, SynonymDBGenerator
-
+from abc import ABCMeta, abstractmethod
+import keras
+from keras.layers import Input, Dense
+from sklearn.feature_extraction import DictVectorizer
 
 logger = logging.getLogger('lexi')
 
 
-class LexensteinSimplifier(Classifier):
+class LexicalSimplificationPipeline(SimplificationPipeline):
 
     def __init__(self, userId, language="da"):
         self.language = language
         self.userId = userId
+        self.cwi = None
         self.generator = None
         self.selector = None
         self.ranker = None
-        # self.fresh_train(resources)
 
-    def generateCandidates(self, sent, target, index, min_similarity=0.6):
-        # Produce candidates:
-        subs = self.generator.getSubstitutionsSingle(
-            sent, target, index, min_similarity=min_similarity)
-        # Create input data instance:
-        fulldata = [sent, target, index]
-        for sub in subs[target]:
-            fulldata.append('0:'+sub)
-        fulldata = [fulldata]
+    def generateCandidates(self, sent, startOffset, endOffset,
+                           min_similarity=0.6):
+        if self.generator is not None:
+            return self.generator.getSubstitutions(
+                sent[startOffset:endOffset], min_similarity=min_similarity)
+        return []
 
-        # Return requested structures:
-        return fulldata
+    def selectCandidates(self, sent, startOffset, endOffset, candidates):
+        if self.selector is not None:
+            return self.selector.select(sent, startOffset, endOffset,
+                                        candidates)
+        return candidates  # fallback if selector not set
 
-    def selectCandidates(self, data):
-        # # If there are not enough candidates to be selected, select none:
-        # if len(data[0]) < 5:
-        #     selected = [[]]
-        # else:
-        selected = self.selector.selectCandidates(
-                data, 0.65, proportion_type='percentage')
+    def setCwi(self, cwi):
+        self.cwi = cwi
 
-        # Produce resulting data:
-        fulldata = [data[0][0], data[0][1], data[0][2]]
-        for sub in selected[0]:
-            fulldata.append('0:'+sub)
-        fulldata = [fulldata]
+    def setRanker(self, ranker):
+        self.ranker = ranker
 
-        # Return desired objects:
-        return fulldata
+    def setGenerator(self, generator):
+        self.generator = generator
 
-    def rankCandidates(self, data, ranker=None):
-        # Rank selected candidates:
-        if ranker:
-            ranks = ranker.getRankings(data)
-        elif self.ranker:
-            ranks = self.ranker.getRankings(data)
-        else:
-            raise AttributeError("No ranker provided to lexical simplifier.")
-            # TODO just return unranked/randomly ranked data?
-        return ranks
+    def setSelector(self, selector):
+        self.selector = selector
 
-    def get_replacement(self, sent, word, index, ranker=None,
-                        min_similarity=0.6):
-        candidates = self.generateCandidates(sent, word, index,
-                                             min_similarity=min_similarity)
-        logger.debug("Candidates {}".format(candidates))
-        candidates = self.selectCandidates(candidates)
-        logger.debug("Candidates (selected) {}".format(candidates))
-        candidates = self.rankCandidates(candidates, ranker)
-        logger.debug("Candidates (ranked) {}".format(candidates))
-        replacement = ""
-        if candidates and len(candidates[0]) > 0:
-            try:
-                replacement = candidates[0][0].decode('utf8')
-            except (UnicodeDecodeError, AttributeError):
-                replacement = candidates[0][0]
-        # heuristics: if target and candidate are too similar, exclude (probably
-        # just morphological variation)
-        if replacement and util.relative_levenshtein(word, replacement) < 0.2:
-            return ""
-        return replacement
-
-    def predict_text(self, text, startOffset=0, endOffset=None,
-                     ranker=None, min_similarity=0.6, blacklist=None):
+    def simplify_text(self, text, startOffset=0, endOffset=None, cwi=None,
+                      ranker=None, min_similarity=0.6, blacklist=None):
         """
-        Receives pure text, without HTML markup, as input and returns
-        simplifications for character offsets.
-        :param text: the input string
-        :param startOffset: offset after which simplifications are solicited
-        :param endOffset: offset until which simplifications are solicited. If
-         None, this will be set to the entire text length
-        :param ranker: a personalized ranker
-        :param min_similarity: minimum similarity for generator, if available
-        :param blacklist: list of words not to be simplified
-        :return: a dictionary mapping character offset anchors to
-        simplifications, which are 4-tuples (original_word, simplified_word,
-        sentence, original_word_index)
+        Full lexical simplification pipeline.
+        :param text:
+        :param startOffset:
+        :param endOffset:
+        :param cwi:
+        :param ranker:
+        :param min_similarity:
+        :param blacklist:
+        :return:
         """
-        if not blacklist:
-            blacklist = []
-
-        def to_be_simplified(_word):
-            return len(_word) > 4 and _word not in blacklist
-
-        if not endOffset:
-            endOffset = len(text)
-
         startOffset = max(0, startOffset)
         endOffset = min(len(text), endOffset)
 
@@ -122,101 +76,228 @@ class LexensteinSimplifier(Classifier):
             # after the selection
             if se < startOffset or sb > endOffset:
                 continue
+
             sent = text[sb:se]
-            word_offsets = util.span_tokenize_words(sent)
-            for i, (wb, we) in enumerate(word_offsets):
-                # make sure we're within start/end offset
+            token_offsets = util.span_tokenize_words(sent)
+
+            for i, (wb, we) in enumerate(token_offsets):
                 global_word_offset_start = sb + wb
                 global_word_offset_end = sb + we
-                if global_word_offset_start >= startOffset and \
-                        global_word_offset_end <= endOffset:
-                    word = sent[wb:we]
-                    logger.debug("Trying to simplify: {}".format(word))
-                    if to_be_simplified(word):
-                        try:
-                            replacement = self.get_replacement(sent, word,
-                                                               str(i), ranker,
-                                                               min_similarity)
-                        except (IndexError, ValueError):
-                            replacement = ""
-                        if replacement:
+                if global_word_offset_start < startOffset or \
+                        global_word_offset_end > endOffset:
+                    continue
 
-                            # This is where the output is generated
-                            offset2simplification[global_word_offset_start] = \
-                                (word, replacement, sent, i)
-                        else:
-                            logger.debug("Found no simplification "
-                                         "for: {}".format(word))
-                    else:
-                        logger.debug("Some rule prevents simplification "
-                                     "for: {}".format(word))
+                # STEP 1: TARGET IDENTIFICATION
+                complex_word = True  # default case, e.g. for when no CWI module
+                # provided for single-word requests
+                if cwi:
+                    complex_word = cwi.is_complex(sent, wb, we)
+                elif self.cwi:
+                    complex_word = self.cwi.is_complex(sent, wb, we)
+                if not complex_word:
+                    continue
+
+                logger.debug("Identified targets: {}".format(sent[wb:we]))
+
+                # STEP 2: CANDIDATE GENERATION
+                candidates = self.generateCandidates(
+                    sent, wb, we, min_similarity=min_similarity)
+                if not candidates:
+                    logger.debug("No candidate replacements found "
+                                 "for '{}'.".format(sent[wb:we]))
+                    continue
+                logger.debug("Candidate replacements: {}.".format(candidates))
+
+                # STEP 3: CANDIDATE SELECTION
+                candidates = self.selectCandidates(sent, wb, we, candidates)
+                if not candidates:
+                    logger.debug("No valid replacements in context.")
+                    continue
+                logger.debug("Filtered replacements: {}.".format(candidates))
+
+                # STEP 4: RANKING
+                if ranker:
+                    ranking = ranker.rank(candidates)
+                elif self.ranker:
+                    ranking = self.ranker.rank(candidates)
+                else:
+                    ranking = candidates
+                offset2simplification[global_word_offset_start] = \
+                    (sent[wb:we], ranking, sent, i)
         return offset2simplification
 
-    def load_default_init(self):
-        self.load("default")
 
-    def predict(self, x, ranker=None):
+class LexiGenerator:
+
+    def __init__(self, language="da", synonyms_files=(), embedding_files=()):
+        self.language = language
+        self.thesaura = [make_synonyms_dict(sf) for sf in synonyms_files]
+        self.w2v_model = parse_embeddings(embedding_files)
+
+    def getSubstitutions(self, word, sources=("thesaurus", "embeddings"),
+                         min_similarity=0.0, eager_return=True):
+        """
+        Get substitutions from different types of sources (e.g. thesaura,
+        embeddings). Using `eager_return`, this method can return substitutions
+        as soon as one of the sources provides substitutions, such that e.g.
+        low-quality substitutions from embeddings do not dilute gold synonyms
+        from a thesaurus.
+        :param word: the target word to replace
+        :param sources: which types of sources to use for mining substitutions.
+        Valid options are `thesaurus` and `embeddings`.
+        :param min_similarity: For embedding substitions, defines the cosine
+        similarity theshold for a candidate to be considered a synonym
+        :param eager_return: if True, return found substitutions as soon as
+        one of the sources provides candidates
+        :return:
+        """
+        subs = set()
+        for src in sources:
+            if src == "thesaurus":
+                subs = self.getSubstitutionsThesaurus(word)
+            elif src == "embeddings":
+                subs = self.getSubstitutionsEmbeddings(word, min_similarity)
+            if subs and eager_return:
+                return subs
+        return subs
+
+    def getSubstitutionsEmbeddings(self, word, min_similarity=0.6):
+        return set([w for w, score in
+                    self.w2v_model.most_similar(word, min_similarity)])
+
+    def getSubstitutionsThesaurus(self, word):
+        substitutions = set()
+        for t in self.thesaura:
+            substitutions.update(t.get(word, []))
+        return substitutions
+
+
+class LexiSelector:
+
+    def __init__(self, language="da"):
+        self.language = language
+
+    def select(self, sentence, startOffset, endOffset, candidates):
+        return candidates  # TODO implement properly
+
+
+class LexiPersonalizedPipelineStep(metaclass=ABCMeta):
+
+    def __init__(self, userId=None):
+        self.userId = userId
+        self.model = None
+        self.featurizer = None
+
+    @abstractmethod
+    def fresh_train(self, data):
         raise NotImplementedError
+
+    @abstractmethod
+    def update(self, data):
+        raise NotImplementedError
+
+    def save(self, models_path):
+        path_prefix = os.path.join(models_path, self.userId)
+        self.model.save(path_prefix+".model.h5")
+        self.featurizer.save(path_prefix+".featurizer")
+
+    def load(self, path):
+        self.model = keras.models.load_model(path)
+
+
+class LexiCWIFeaturizer(LexiFeaturizer, DictVectorizer):
+
+    def __init__(self):
+        super().__init__(self)
+
+    def save(self, path):
+        pass  # TODO
+
+    def load(self, path):
+        pass  # TODO
+
+    def dimensions(self):
+        # return len(self.get_feature_names())
+        return 3
+
+
+class LexiCWI(LexiPersonalizedPipelineStep):
+
+    def __init__(self, userId, featurizer=None):
+        self.featurizer = featurizer if featurizer else LexiCWIFeaturizer()
+        # self.model = self.build_model()
+        super().__init__(userId)
+
+    def build_model(self, ):
+        n_input = self.featurizer.dimensions()
+        i = Input(shape=(n_input,))
+        o = Dense([2])
+        model = keras.models.Model(Input(n_input), )
+        return model
+
+    def fresh_train(self, cwi_data):
+        x, y = cwi_data
+        self.model.fit(x, y)
+
+    def update(self, cwi_data):
+        x, y = cwi_data
+        self.model.fit(x, y)  # TODO updating like this is problematic if we
+        # want learning rate decay or other things that rely on previous
+        # iterations, those are not saved in the model or optimizer...
+
+    def identify_targets(self, sent, token_offsets):
+        return token_offsets  # TODO implement, use is_complex
+
+    def is_complex(self, sent, startOffset, endOffset):
+        return endOffset-startOffset > 7  # TODO implement properly
+
+
+class LexiRankingFeaturizer(LexiFeaturizer, DictVectorizer):
+
+    def __init__(self):
+        super().__init__(self)
+
+    def save(self, path):
+        pass  # TODO
+
+    def load(self, path):
+        pass  # TODO
+
+    def dimensions(self):
+        # return len(self.get_feature_names())
+        return 3
+
+
+class LexiRanker(LexiPersonalizedPipelineStep):
+
+    def __init__(self, userId, featurizer=None):
+        self.userId = userId
+        self.featurizer = featurizer if featurizer else LexiRankingFeaturizer()
+        self.model = self.build_model()
+        super().__init__(userId)
+
+    def build_model(self):
+        pass
+
+    def rank(self, candidates, sentence=None, index=None):
+        return sorted(candidates, key=lambda x: len(x))
+
+    def save(self, userId):
+        with open(RANKER_MODEL_PATH_TEMPLATE.format(userId), 'wb') as pf:
+            # pickle.dump((self.fe, self.model), pf, pickle.HIGHEST_PROTOCOL)
+            pickle.dump(self, pf, pickle.HIGHEST_PROTOCOL)
+
+    def load(self, path):
+        pass
+
+    def fresh_train(self, x, y):
+        pass
 
     def update(self, x, y):
-        raise NotImplementedError
-
-    def save(self):
-        with open(LEXICAL_MODEL_PATH_TEMPLATE.format(self.userId), 'wb') as pf:
-            pickle.dump((self.language, self.userId, self.generator,
-                         self.selector, self.ranker), pf,
-                        pickle.HIGHEST_PROTOCOL)
-
-    def load(self, userId=None):
-        if not userId:
-            userId = self.userId
-        with open(LEXICAL_MODEL_PATH_TEMPLATE.format(userId), 'rb') as pf:
-            unpickled = pickle.load(pf)
-            logger.debug(unpickled)
-            (self.language, self.userId, self.generator,
-             self.selector, self.ranker) = unpickled
-        return self
-
-    def fresh_train(self, resources=None):
-        if not resources:
-            try:
-                resources = RESOURCES[self.language]
-            except KeyError:
-                logger.error("Couldn't find resources for language "
-                             "ID {}".format(self.language))
-        # General purpose
-        w2vpm = resources['embeddings']
-        # Generator
-        # gg = LexensteinGenerator(w2vpm)
-        # gg = SynonymDBGenerator(w2vpm, resources['synonyms'])
-        gg = LexensteinGenerator(w2vpm)
-
-        # Selector
-        fe = FeatureEstimator()
-        fe.resources[w2vpm[0]] = gg.model
-        fe.addCollocationalFeature(resources['lm'], 2, 2, 'Complexity')
-        fe.addWordVectorSimilarityFeature(w2vpm[0], 'Simplicity')
-        br = BoundaryRanker(fe)
-        bs = BoundarySelector(br)
-        bs.trainSelectorWithCrossValidation(resources['ubr'], 1, 5, 0.25,
-                                            k='all')
-        # Ranker
-        fe = FeatureEstimator()
-        fe.addLengthFeature('Complexity')
-        fe.addCollocationalFeature(resources['lm'], 2, 2, 'Simplicity')
-        orr = OnlineRegressionRanker(fe, None, training_dataset=resources[
-                                         'ranking_training_dataset'])
-        # Return LexicalSimplifier object
-        self.generator = gg
-        self.selector = bs
-        self.ranker = orr
-        return self
-
-    def check_featurizer_set(self):
-        return True
+        pass
 
 
-class DummyLexicalClassifier(Classifier):
+class DummyLexicalSimplificationPipeline(SimplificationPipeline):
     def __init__(self, userId="anonymous"):
         self.model = None
         self.featurizer = None
@@ -267,9 +348,13 @@ class DummyLexicalClassifier(Classifier):
         with open(LEXICAL_MODEL_PATH_TEMPLATE.format("default"), 'rb') as pf:
             self.model, self.featurizer = pickle.load(pf)
 
-    def predict_text(self, txt, ranker=None):
+    def simplify_text(self, txt, startOffset=0, endOffset=None,
+                      cwi=None, ranker=None):
         """
         :param txt:
+        :param startOffset:
+        :param endOffset:
+        :param cwi:
         :param ranker:
         :return: tokenized text (incl. word-final whitespaces) and
         id2simplifications dict

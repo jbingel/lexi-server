@@ -2,14 +2,17 @@ from collections import defaultdict
 
 import networkx as nx
 import numpy as np
-import spacy
+# import stanfordnlp
 from networkx.algorithms.traversal.depth_first_search import dfs_edges
-
+from lexi.config import STANFORDNLP
 from lexi.core.featurize.util import resources
 
 COMMA = ","
 VERB = "V"
-nlp = spacy.load('en')
+# nlp = stanfordnlp.Pipeline(nlp = stanfordnlp.Pipeline(
+#     processors='tokenize,mwt,pos',
+#     lang='da', models_dir=STANFORDNLP,
+#     tokenize_pretokenized=True))
 
 
 class EtymWN:
@@ -121,26 +124,26 @@ def has_ancestor_in_lang(lang, word_etym):
             return True
     return False
 
-
-def read_sentences_plain(raw_data):
-    doc = nlp(raw_data)
-    words_seen = 0
-    for s in doc.sents:
-        sent = defaultdict(list)
-        for i, w in enumerate(s):
-            sent["idx"].append(i+1)
-            sent["form"].append(w.text)
-            sent["lemma"].append(w.lemma_)
-            sent["pos"].append(w.pos_)
-            ne = w.ent_type_ if w.ent_type_ else "O"
-            sent["ne"].append(ne)
-            # target = w.head.i - words_seen if w.dep_.lower() != "root" else -1
-            target = w.head.i - words_seen
-            sent["head"].append(target+1)
-            sent["deprel"].append(w.dep_)
-            sent["label"].append("?")
-        words_seen += len(s)
-        yield sent
+#
+# def read_sentences_plain(raw_data):
+#     doc = nlp(raw_data)
+#     words_seen = 0
+#     for s in doc.sentences:
+#         sent = defaultdict(list)
+#         for i, w in enumerate(s):
+#             sent["idx"].append(i+1)
+#             sent["form"].append(w.text)
+#             sent["lemma"].append(w.lemma_)
+#             sent["pos"].append(w.pos_)
+#             ne = w.ent_type_ if w.ent_type_ else "O"
+#             sent["ne"].append(ne)
+#             # target = w.head.i - words_seen if w.dep_.lower() != "root" else -1
+#             target = w.head.i - words_seen
+#             sent["head"].append(target+1)
+#             sent["deprel"].append(w.dep_)
+#             sent["label"].append("?")
+#         words_seen += len(s)
+#         yield sent
 
 
 def read_sentences(data):

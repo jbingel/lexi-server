@@ -3,6 +3,7 @@ from sklearn.feature_extraction import DictVectorizer
 
 from lexi.core.featurize import extract_lexical_feats, feat_util
 from lexi.core.featurize.extract_sentence_feats import TreeNode
+from abc import ABCMeta, abstractmethod
 
 
 class LabelMapper:
@@ -28,6 +29,17 @@ class LabelMapper:
         for _id in ids:
             out.append(self.id2label.get(_id, "?"))
         return out
+
+
+class LexiFeaturizer(metaclass=ABCMeta):
+
+    @abstractmethod
+    def save(self, path):
+        raise NotImplementedError
+
+    @abstractmethod
+    def load(self, path):
+        raise NotImplementedError
 
 
 class Featurizer:

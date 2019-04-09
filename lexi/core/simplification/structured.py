@@ -14,13 +14,13 @@ from lexi.core.util import util
 from lexi.core.featurize.featurizers import PystructChainFeaturizer, \
     PystructEdgeFeaturizer
 from lexi.config import MODEL_PATH_TEMPLATE
-from lexi.core.simplification import Classifier
+from lexi.core.simplification import SimplificationPipeline
 from lexi.core.simplification import detokenizer
 
 logger = logging.getLogger('lexi')
 
 
-class PystructClassifier(Classifier, metaclass=ABCMeta):
+class PystructSimplificationPipeline(SimplificationPipeline, metaclass=ABCMeta):
     def __init__(self, userId="anonymous"):
         self.model = None
         self.learner = None
@@ -84,7 +84,7 @@ class PystructClassifier(Classifier, metaclass=ABCMeta):
         with open(MODEL_PATH_TEMPLATE.format("default"), 'rb') as pf:
             self.learner, self.model, self.featurizer = pickle.load(pf)
 
-    def predict_text(self, input_txt):
+    def simplify_text(self, input_txt):
         original = []
         simplified = []
         X, parses = self.featurizer.transform_plain(input_txt)
@@ -123,7 +123,7 @@ class PystructClassifier(Classifier, metaclass=ABCMeta):
         return original, simplified
 
 
-class ChainCRFClassifier(PystructClassifier):
+class ChainCRFClassifier(PystructSimplificationPipeline):
 
     def fresh_train(self, x, y, iterations=10):
         self.model = ChainCRF(inference_method="max-product")
@@ -146,7 +146,7 @@ class ChainCRFClassifier(PystructClassifier):
     #     self.fresh_train(x, y, iterations=iterations)
 
 
-class EdgeCRFClassifier(PystructClassifier):
+class EdgeCRFClassifier(PystructSimplificationPipeline):
 
     def fresh_train(self, x, y, iterations=10, decay_rate=1):
         self.model = EdgeFeatureGraphCRF(inference_method="max-product")
@@ -169,7 +169,7 @@ class EdgeCRFClassifier(PystructClassifier):
     #     self.fresh_train(x, y, iterations=iterations)
 
 
-class AveragedPerceptron(Classifier):
+class AveragedPerceptron(SimplificationPipeline):
     """
     An averaged perceptron, as implemented by Matthew Honnibal.
 
@@ -246,7 +246,7 @@ class AveragedPerceptron(Classifier):
         return None
 
 
-class OnlineStructuredPerceptron(Classifier):
+class OnlineStructuredPerceptron(SimplificationPipeline):
     """Implements a first order CRF"""
 
     def __init__(self,
@@ -397,7 +397,7 @@ class OnlineStructuredPerceptron(Classifier):
     def predict(self, x):
         return self.viterbi_decode(x)[0]
 
-    def predict_text(self, txt):
+    def simplify_text(self, txt):
         # TODO
         pass
 

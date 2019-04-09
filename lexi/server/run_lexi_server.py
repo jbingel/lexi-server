@@ -14,14 +14,14 @@ from lexi.server.util.database import DatabaseConnection, \
 from werkzeug.exceptions import HTTPException
 
 from lexi.config import LEXI_BASE, LOG_DIR, RANKER_MODEL_PATH_TEMPLATE, \
-    MODELS_DIR
+    CWI_MODEL_PATH_TEMPLATE, MODELS_DIR, RESOURCES
 from lexi.core.endpoints import update_ranker
-from lexi.core.simplification.lexical import LexensteinSimplifier
-from lexi.core.util.io import load_pickled_model
+from lexi.core.simplification.lexical import LexicalSimplificationPipeline, \
+    LexiCWI, LexiRanker, LexiGenerator
 from lexi.server.util import statuscodes
 from lexi.server.util.html import process_html
 from lexi.server.util.communication import make_response
-from lexi.lib.lib import OnlineRegressionRanker
+# from lexi.lib.lib import OnlineRegressionRanker
 
 SCRIPTDIR = os.path.dirname(os.path.realpath(__file__))
 
@@ -118,10 +118,18 @@ app.debug = False
 
 
 # LOADING DEFAULT MODEL
-simplifier = LexensteinSimplifier("default").load()
-default_ranker = load_pickled_model(
-    RANKER_MODEL_PATH_TEMPLATE.format("default"))
+simplification_pipeline = LexicalSimplificationPipeline("default")
+generator = LexiGenerator(synonyms_files=RESOURCES["da"]["synonyms"],
+                          embedding_files=RESOURCES["da"]["embeddings"])
+simplification_pipeline.setGenerator(generator)
+# default_ranker = load_pickled_model(
+#     RANKER_MODEL_PATH_TEMPLATE.format("default"))
+# default_cwi = load_pickled_model(
+#     CWI_MODEL_PATH_TEMPLATE.format("default"))
+default_ranker = LexiRanker("default")
+default_cwi = LexiCWI("default")  # TODO pretrain offline and load
 personalized_rankers = {"default": default_ranker}
+personalized_cwi = {"default": default_cwi}
 logger.debug("Default ranker:")
 logger.debug(type(default_ranker))
 logger.debug(default_ranker)
@@ -162,32 +170,24 @@ def process():
                                               frontend_version=frontend_version,
                                               language=language)
 
-    if user_id in personalized_rankers:
-        logger.info("Using personalized ranker, still in memory.")
-        ranker = personalized_rankers[user_id]
-    else:
-        logger.info("Gotta load ranker or use default...")
-        try:
-            # retrieve model
-            model_path = db_connection.get_model_path(user_id)
-            ranker = OnlineRegressionRanker.staticload(model_path)
-        except:
-            logger.warning("Could not load personalized model. "
-                           "Loading default ranker.")
-            ranker = copy.copy(personalized_rankers["default"])
-            logger.debug(ranker)
-            ranker.userId = user_id
-        personalized_rankers[user_id] = ranker
+    cwi = None
+    single_word_request = request.json.get("single_word_request", False)
+    if not single_word_request:
+        cwi = get_personalized_cwi(user_id)
+
+    ranker = get_personalized_ranker(user_id)
+
+    logger.info("Loaded CWI: "+str(cwi))
     logger.info("Loaded ranker: "+str(ranker))
     min_similarity = request.json.get("min_similarity", 0.65)
     if not type(min_similarity) == float:
         raise ValueError("'min_similarity' must be a float. You "
                          "provided a {}".format(type(min_similarity)))
-    html_out, simplifications = process_html(simplifier,
+    html_out, simplifications = process_html(simplification_pipeline,
                                              request.json["html"],
                                              request.json.get("startOffset"),
                                              request.json.get("endOffset"),
-                                             ranker, mode="lexical",
+                                             cwi, ranker, mode="lexical",
                                              requestId=request_id,
                                              min_similarity=min_similarity,
                                              blacklist=GENERIC_BLACKLIST)
@@ -293,6 +293,46 @@ def versioncheck():
                          "Returned most recent frontend version",
                          most_recent_version=frontend_most_recent_version,
                          download_url=download_url)
+
+
+def get_personalized_ranker(user_id):
+    if user_id in personalized_rankers:
+        logger.info("Using personalized ranker, still in memory.")
+        ranker = personalized_rankers[user_id]
+    else:
+        logger.info("Gotta load ranker or use default...")
+        try:
+            # retrieve model
+            model_path = db_connection.get_model_path(user_id)
+            ranker = LexiRanker(user_id)
+        except:
+            logger.warning("Could not load personalized model. "
+                           "Loading default ranker.")
+            ranker = copy.copy(personalized_rankers["default"])
+            logger.debug(ranker)
+            ranker.userId = user_id
+        personalized_rankers[user_id] = ranker
+    return ranker
+
+
+def get_personalized_cwi(user_id):
+    if user_id in personalized_cwi:
+        logger.info("Using personalized cwi, still in memory.")
+        cwi = personalized_cwi[user_id]
+    else:
+        logger.info("Gotta load cwi or use default...")
+        try:
+            # retrieve model
+            model_path = db_connection.get_model_path(user_id)
+            cwi = LexiCWI(user_id)
+        except:
+            logger.warning("Could not load personalized model. "
+                           "Loading default cwi.")
+            cwi = copy.copy(personalized_cwi["default"])
+            logger.debug(cwi)
+            cwi.userId = user_id
+        personalized_cwi[user_id] = cwi
+    return cwi
 
 
 if __name__ == "__main__":
