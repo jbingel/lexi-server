@@ -18,8 +18,6 @@ MODEL_PATH_TEMPLATE = os.path.join(MODELS_DIR, "{}.pickle")
 RESOURCES_FULL = {
     "da": {
         "embeddings":
-            #[RESOURCES_DIR+"/da/embeddings/danish_word_vectors_1300_cbow_
-        # filtered.bin",
             [RESOURCES_DIR+"/da/embeddings/danish_word_vectors_1300_cbow.bin",
              RESOURCES_DIR+"/da/embeddings/da.bin"],
         "lm":
@@ -45,5 +43,5 @@ RESOURCES = {
         "ranking_training_dataset":
             RESOURCES_DIR + "/da/simplification/clean_danish_ls_dataset.txt",
         "synonyms":
-            RESOURCES_DIR + "/da/synonyms/da_synonyms_combined.csv"}
+            [RESOURCES_DIR + "/da/synonyms/da_synonyms_combined.csv"]}
 }

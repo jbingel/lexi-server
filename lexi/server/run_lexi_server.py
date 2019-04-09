@@ -17,7 +17,7 @@ from lexi.config import LEXI_BASE, LOG_DIR, RANKER_MODEL_PATH_TEMPLATE, \
     CWI_MODEL_PATH_TEMPLATE, MODELS_DIR, RESOURCES
 from lexi.core.endpoints import update_ranker
 from lexi.core.simplification.lexical import LexicalSimplificationPipeline, \
-    LexiCWI, LexiRanker, LexiGenerator
+    LexiCWI, LexiRanker, LexiGenerator, LexiRankingFeaturizer
 from lexi.server.util import statuscodes
 from lexi.server.util.html import process_html
 from lexi.server.util.communication import make_response
@@ -127,6 +127,8 @@ simplification_pipeline.setGenerator(generator)
 # default_cwi = load_pickled_model(
 #     CWI_MODEL_PATH_TEMPLATE.format("default"))
 default_ranker = LexiRanker("default")
+default_ranker.featurizer = LexiRankingFeaturizer()
+logger.debug("Default Ranker Featurizer: {}".format(default_ranker.featurizer))
 default_cwi = LexiCWI("default")  # TODO pretrain offline and load
 personalized_rankers = {"default": default_ranker}
 personalized_cwi = {"default": default_cwi}

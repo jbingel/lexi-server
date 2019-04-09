@@ -131,8 +131,9 @@ def process_html_lexical(pipeline, html, startOffset, endOffset, cwi, ranker,
             html_out += "".join(offset2html[i])
         if i in offset2simplification and not open_hyperlinks_count > 0:
             # checking for hyperlinks because we don't want to simplify those
-            original, replacements, \
-                sentence, word_index = offset2simplification[i]
+            original, replacements, sentence, \
+                word_offset_start, word_offset_end = \
+                offset2simplification[i]
             # in future, possibly get more alternatives, and possibly return
             # in some other order
             replacements = [util.escape(r) for r in replacements]
@@ -147,18 +148,17 @@ def process_html_lexical(pipeline, html, startOffset, endOffset, cwi, ranker,
                        "</span>"\
                 .format(elemId, displaying_original, original)
             html_out += span_out
-            # TODO allow more than two alternatives as `choices' in future
-            # (https://github.com/jbingel/lexi-backend/issues/2)
             simplifications.update(
                 {elemId: {
                     "request_id": requestId,
                     "original": original, 
-                    "simple": replacements,  # legacy for frontend version <= 0.2
+                    "simple": replacements,  # legacy for frontend v. <= 0.2
                     "choices": choices,
                     "bad_feedback": False,
                     "selection": 0,
                     "sentence": sentence,
-                    "word_index": word_index,
+                    "word_offset_start": word_offset_start,
+                    "word_offset_end": word_offset_end
                 }
                 })
             i += len(original)-1
@@ -170,31 +170,6 @@ def process_html_lexical(pipeline, html, startOffset, endOffset, cwi, ranker,
     return html_out, simplifications
 
 
-# TODO adapt to new structure
-def update_classifier(classifier, feedback):
-    """
-    Featurizes simplification feedback from user and updates classifier
-    accordingly
-    :param classifier:
-    :param feedback:
-    :return:
-    """
-    xs, ys = [], []
-    for item in feedback.values():
-        original = item["original"]
-        simple = item["simple"]
-        original_is_simpler = item["is_simplified"]  # boolean
-        xs.append(original)
-        ys.append(int(original_is_simpler))  # 1 iff original_is_simpler
-        xs.append(simple)
-        ys.append(int(not original_is_simpler))  # inverse
-    try:
-        classifier.featurize_update(xs, ys)
-    except AttributeError:  # likely because featurizer hasn't been trained
-        classifier.featurize_train(xs, ys)
-
-
-# TODO adapt to new structure
 def update_ranker(ranker, user_id, feedback, overall_rating=0):
     """
     Collects feedback and updates ranker
@@ -204,38 +179,56 @@ def update_ranker(ranker, user_id, feedback, overall_rating=0):
     :param overall_rating: a 1-to-5 scale rating of the overall performance
     :return:
     """
-    # ranker online training expects formatted text as input (instead of
-    # structured data)
-    # TODO really gotta improve interface, make ranker take structured data
-    textblock = ""
+    update_batch = []
+    featurized_words = {}
+
+    # iterate over feedback items (user choices for simplified words)
     for _, simplification in feedback.items():
+
+        # catch some cases in which we don't want to do anything
         if simplification["bad_feedback"]:
             continue
-        selection = simplification["selection"]
         choices = simplification.get("choices")
         if not choices:
             logger.warning("No `choices` field in the "
                            "simplifications: {}".format(simplification))
-            return None
+            continue
+        selection = simplification["selection"]
         logger.debug(simplification)
         if selection == 0:  # nothing selected
             continue
-        else:
-            simple_index = selection % len(choices)
-            simple_word = choices[simple_index]
-            difficult_words = [w for w in choices if not w == simple_word]
-            for difficult in difficult_words:
-                textblock += "{}\t{}\t{}\t{}\t{}\n".format(
-                    simplification["sentence"].replace("\n", " "),
-                    choices,
-                    str(simplification["word_index"]),
-                    "1:" + simple_word,
-                    "2:" + difficult
-                )
-    textblock = textblock.strip()  # remove last newline
-    if textblock:
-        logger.debug("Updating with the following textblock:\n\n"+textblock)
-        ranker.onlineTrainRegressionModel(textblock)
+
+        # if all good, collect batch
+        # featurize words in context
+        original_sentence = simplification.get("sentence")
+        original_start_offset = simplification.get("word_offset_start")
+        original_end_offset = simplification.get("word_offset_end")
+        for w in choices:
+            if w not in featurized_words:
+                # construct modified sentence
+                modified_sentence = "{}{}{}".format(
+                    original_sentence[:original_start_offset],
+                    w,
+                    original_sentence[original_end_offset:])
+                # featurize word in modified context
+                logger.debug("{} {} {} {}".format(modified_sentence, w,
+                                                  original_start_offset,
+                                                  original_start_offset+len(w)))
+                featurized_words[w] = ranker.featurizer.transform(
+                    modified_sentence, original_start_offset,
+                    original_start_offset+len(w), w)
+
+        simple_index = selection % len(choices)
+        simple_word = choices[simple_index]
+        difficult_words = [w for w in choices if not w == simple_word]
+
+        # add feature vectors to update batch
+        for difficult in difficult_words:
+            update_batch.append((featurized_words[simple_word],
+                                 featurized_words[difficult]))
+
+    if update_batch:
+        ranker.update(update_batch)
         ranker.save(user_id)
     else:
         logger.info("Didn't get any useable feedback.")

@@ -80,7 +80,7 @@ class LexicalSimplificationPipeline(SimplificationPipeline):
             sent = text[sb:se]
             token_offsets = util.span_tokenize_words(sent)
 
-            for i, (wb, we) in enumerate(token_offsets):
+            for wb, we in token_offsets:
                 global_word_offset_start = sb + wb
                 global_word_offset_end = sb + we
                 if global_word_offset_start < startOffset or \
@@ -123,7 +123,7 @@ class LexicalSimplificationPipeline(SimplificationPipeline):
                 else:
                     ranking = candidates
                 offset2simplification[global_word_offset_start] = \
-                    (sent[wb:we], ranking, sent, i)
+                    (sent[wb:we], ranking, sent, wb, we)
         return offset2simplification
 
 
@@ -272,7 +272,7 @@ class LexiRanker(LexiPersonalizedPipelineStep):
 
     def __init__(self, userId, featurizer=None):
         self.userId = userId
-        self.featurizer = featurizer if featurizer else LexiRankingFeaturizer()
+        self.featurizer = featurizer or LexiRankingFeaturizer()
         self.model = self.build_model()
         super().__init__(userId)
 
