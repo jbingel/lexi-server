@@ -127,14 +127,13 @@ simplification_pipeline.setGenerator(generator)
 # default_cwi = load_pickled_model(
 #     CWI_MODEL_PATH_TEMPLATE.format("default"))
 default_ranker = LexiRanker("default")
-default_ranker.featurizer = LexiRankingFeaturizer()
+# default_ranker.set_featurizer()
 logger.debug("Default Ranker Featurizer: {}".format(default_ranker.featurizer))
 default_cwi = LexiCWI("default")  # TODO pretrain offline and load
 personalized_rankers = {"default": default_ranker}
 personalized_cwi = {"default": default_cwi}
-logger.debug("Default ranker:")
-logger.debug(type(default_ranker))
-logger.debug(default_ranker)
+logger.debug("Default ranker: {} ({})".format(default_ranker,
+                                              type(default_ranker)))
 logger.info("Base simplifier loaded.")
 
 # BLACKLISTED WORDS, not to be simplified
@@ -266,12 +265,13 @@ def get_feedback():
         logger.info(simplifications)
         # try:
         logger.debug("Getting ranker for user: {}".format(user_id))
-        ranker = personalized_rankers[user_id]
+        ranker = get_personalized_ranker(user_id)
         logger.debug("Ranker: {}".format(ranker))
+        logger.debug("  -- Featurizer: {} ({})".format(ranker.featurizer, hasattr(ranker, "featurizer")))
         update_ranker(ranker, user_id, simplifications, rating)
         return make_response(statuscodes.OK, "Feedback successful")
     else:
-        msg = "Did not receive any simplificiations"
+        msg = "Did not receive any simplifications"
         logger.info(msg)
         return make_response(statuscodes.NO_SIMPLIFICATIONS_RETURNED, msg)
 
@@ -303,16 +303,14 @@ def get_personalized_ranker(user_id):
         ranker = personalized_rankers[user_id]
     else:
         logger.info("Gotta load ranker or use default...")
-        try:
-            # retrieve model
-            model_path = db_connection.get_model_path(user_id)
-            ranker = LexiRanker(user_id)
-        except:
-            logger.warning("Could not load personalized model. "
-                           "Loading default ranker.")
-            ranker = copy.copy(personalized_rankers["default"])
-            logger.debug(ranker)
-            ranker.userId = user_id
+        # retrieve model
+        # model_path = db_connection.get_model_path(user_id)
+        # ranker = LexiRanker.load(model_path)
+        ranker = LexiRanker(user_id)
+        # featurizer = ...  # retrieve
+        # ranker.set_featurizer(featurizer)
+        # ranker.featurizer = LexiRankingFeaturizer()
+        ranker.userId = user_id
         personalized_rankers[user_id] = ranker
     return ranker
 

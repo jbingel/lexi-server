@@ -121,6 +121,7 @@ def process_html_lexical(pipeline, html, startOffset, endOffset, cwi, ranker,
         min_similarity=min_similarity, blacklist=blacklist)
     logger.debug("Simplifying text between character offsets {} "
                  "and {}: {}".format(startOffset, endOffset, pure_text))
+    logger.debug(offset2simplification)
     i = 0
     open_hyperlinks_count = 0
     while i < len(pure_text):
@@ -182,6 +183,9 @@ def update_ranker(ranker, user_id, feedback, overall_rating=0):
     update_batch = []
     featurized_words = {}
 
+    logger.debug("Updating ranker: {}".format(ranker))
+    logger.debug("Ranker has featurizer: {}".format(ranker.featurizer))
+
     # iterate over feedback items (user choices for simplified words)
     for _, simplification in feedback.items():
 
@@ -211,12 +215,12 @@ def update_ranker(ranker, user_id, feedback, overall_rating=0):
                     w,
                     original_sentence[original_end_offset:])
                 # featurize word in modified context
-                logger.debug("{} {} {} {}".format(modified_sentence, w,
-                                                  original_start_offset,
-                                                  original_start_offset+len(w)))
-                featurized_words[w] = ranker.featurizer.transform(
+                logger.debug("Word in modified context: {} {} {} {}".format(
+                    modified_sentence, w, original_start_offset,
+                    original_start_offset+len(w)))
+                featurized_words[w] = ranker.featurizer.transform_wic(
                     modified_sentence, original_start_offset,
-                    original_start_offset+len(w), w)
+                    original_start_offset+len(w))
 
         simple_index = selection % len(choices)
         simple_word = choices[simple_index]

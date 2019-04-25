@@ -1,6 +1,7 @@
 import logging
 import pickle
 import os
+import jsonpickle
 
 from lexi.config import LEXICAL_MODEL_PATH_TEMPLATE, RANKER_MODEL_PATH_TEMPLATE
 from lexi.core.simplification import SimplificationPipeline
@@ -186,7 +187,6 @@ class LexiPersonalizedPipelineStep(metaclass=ABCMeta):
     def __init__(self, userId=None):
         self.userId = userId
         self.model = None
-        self.featurizer = None
 
     @abstractmethod
     def fresh_train(self, data):
@@ -199,34 +199,47 @@ class LexiPersonalizedPipelineStep(metaclass=ABCMeta):
     def save(self, models_path):
         path_prefix = os.path.join(models_path, self.userId)
         self.model.save(path_prefix+".model.h5")
-        self.featurizer.save(path_prefix+".featurizer")
+        if hasattr(self, "featurizer") and self.featurizer:
+            self.featurizer.save(path_prefix+".featurizer")
 
     def load(self, path):
         self.model = keras.models.load_model(path)
 
 
-class LexiCWIFeaturizer(LexiFeaturizer, DictVectorizer):
+class LexiCWIFeaturizer(DictVectorizer):
 
     def __init__(self):
-        super().__init__(self)
-
-    def save(self, path):
-        pass  # TODO
-
-    def load(self, path):
-        pass  # TODO
+        super().__init__()
 
     def dimensions(self):
-        # return len(self.get_feature_names())
-        return 3
+        return len(self.get_feature_names())
+        # return 3
+
+    def transform_wic(self, sentence, startOffset, endOffset):
+        featuredict = dict()
+        featuredict["word_length"] = endOffset - startOffset
+        featuredict["sentence_length"] = len(sentence)
+        self.transform(featuredict)
+
+    def save(self, path):
+        json = jsonpickle.encode(self)
+        with open(path, "w") as jsonfile:
+            jsonfile.write(json)
+
+    @staticmethod
+    def staticload(path):
+        with open(path) as jsonfile:
+            json = jsonfile.read()
+        return jsonpickle.decode(json)
 
 
 class LexiCWI(LexiPersonalizedPipelineStep):
 
     def __init__(self, userId, featurizer=None):
-        self.featurizer = featurizer if featurizer else LexiCWIFeaturizer()
         # self.model = self.build_model()
         super().__init__(userId)
+        self.featurizer = featurizer if featurizer is not None else \
+            LexiCWIFeaturizer()
 
     def build_model(self, ):
         n_input = self.featurizer.dimensions()
@@ -252,29 +265,45 @@ class LexiCWI(LexiPersonalizedPipelineStep):
         return endOffset-startOffset > 7  # TODO implement properly
 
 
-class LexiRankingFeaturizer(LexiFeaturizer, DictVectorizer):
+class LexiRankingFeaturizer(DictVectorizer):
 
     def __init__(self):
-        super().__init__(self)
-
-    def save(self, path):
-        pass  # TODO
-
-    def load(self, path):
-        pass  # TODO
+        super().__init__()
 
     def dimensions(self):
-        # return len(self.get_feature_names())
-        return 3
+        return len(self.get_feature_names())
+        # return 3
+
+    def transform_wic(self, sentence, startOffset, endOffset):
+        featuredict = dict()
+        featuredict["word_length"] = endOffset - startOffset
+        featuredict["sentence_length"] = len(sentence)
+        self.transform(featuredict)
+
+    def save(self, path):
+        json = jsonpickle.encode(self)
+        with open(path, "w") as jsonfile:
+            jsonfile.write(json)
+
+    @staticmethod
+    def staticload(path):
+        with open(path) as jsonfile:
+            json = jsonfile.read()
+        return jsonpickle.decode(json)
 
 
 class LexiRanker(LexiPersonalizedPipelineStep):
 
-    def __init__(self, userId, featurizer=None):
+    def __init__(self, userId):
         self.userId = userId
-        self.featurizer = featurizer or LexiRankingFeaturizer()
+        self.featurizer = LexiRankingFeaturizer()
+        logger.debug("Featurizer: {}".format(self.featurizer))
+        logger.debug("Has transform? {}".format(hasattr(self.featurizer, "transform")))
         self.model = self.build_model()
         super().__init__(userId)
+
+    def set_featurizer(self, featurizer):
+        self.featurizer = featurizer
 
     def build_model(self):
         pass
