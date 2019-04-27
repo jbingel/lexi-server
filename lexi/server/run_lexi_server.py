@@ -17,7 +17,7 @@ from lexi.config import LEXI_BASE, LOG_DIR, RANKER_MODEL_PATH_TEMPLATE, \
     CWI_MODEL_PATH_TEMPLATE, MODELS_DIR, RESOURCES
 from lexi.core.endpoints import update_ranker
 from lexi.core.simplification.lexical import LexicalSimplificationPipeline, \
-    LexiCWI, LexiRanker, LexiGenerator, LexiRankingFeaturizer
+    LexiCWI, LexiRanker, LexiGenerator, LexiFeaturizer, LexiFeaturizer
 from lexi.server.util import statuscodes
 from lexi.server.util.html import process_html
 from lexi.server.util.communication import make_response
@@ -126,10 +126,12 @@ simplification_pipeline.setGenerator(generator)
 #     RANKER_MODEL_PATH_TEMPLATE.format("default"))
 # default_cwi = load_pickled_model(
 #     CWI_MODEL_PATH_TEMPLATE.format("default"))
-default_ranker = LexiRanker("default")
-# default_ranker.set_featurizer()
+
+featurizer = LexiFeaturizer.staticload("default_featurizer.json")
+
+default_ranker = LexiRanker("default", featurizer=featurizer)
 logger.debug("Default Ranker Featurizer: {}".format(default_ranker.featurizer))
-default_cwi = LexiCWI("default")  # TODO pretrain offline and load
+default_cwi = LexiCWI("default", featurizer=featurizer)  # TODO pretrain offline and load
 personalized_rankers = {"default": default_ranker}
 personalized_cwi = {"default": default_cwi}
 logger.debug("Default ranker: {} ({})".format(default_ranker,
@@ -306,7 +308,7 @@ def get_personalized_ranker(user_id):
         # retrieve model
         # model_path = db_connection.get_model_path(user_id)
         # ranker = LexiRanker.load(model_path)
-        ranker = LexiRanker(user_id)
+        ranker = LexiRanker(user_id, featurizer=featurizer)
         # featurizer = ...  # retrieve
         # ranker.set_featurizer(featurizer)
         # ranker.featurizer = LexiRankingFeaturizer()
@@ -324,7 +326,7 @@ def get_personalized_cwi(user_id):
         try:
             # retrieve model
             model_path = db_connection.get_model_path(user_id)
-            cwi = LexiCWI(user_id)
+            cwi = LexiCWI(user_id, featurizer=featurizer)
         except:
             logger.warning("Could not load personalized model. "
                            "Loading default cwi.")

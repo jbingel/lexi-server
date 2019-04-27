@@ -31,17 +31,6 @@ class LabelMapper:
         return out
 
 
-class LexiFeaturizer(metaclass=ABCMeta):
-
-    @abstractmethod
-    def save(self, path):
-        raise NotImplementedError
-
-    @abstractmethod
-    def load(self, path):
-        raise NotImplementedError
-
-
 class Featurizer:
 
     def __init__(self, features=None):

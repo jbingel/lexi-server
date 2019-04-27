@@ -218,7 +218,7 @@ def update_ranker(ranker, user_id, feedback, overall_rating=0):
                 logger.debug("Word in modified context: {} {} {} {}".format(
                     modified_sentence, w, original_start_offset,
                     original_start_offset+len(w)))
-                featurized_words[w] = ranker.featurizer.transform_wic(
+                featurized_words[w] = ranker.featurizer.featurize(
                     modified_sentence, original_start_offset,
                     original_start_offset+len(w))
 
@@ -227,11 +227,15 @@ def update_ranker(ranker, user_id, feedback, overall_rating=0):
         difficult_words = [w for w in choices if not w == simple_word]
 
         # add feature vectors to update batch
+        update_batch.append((featurized_words[simple_word], 0))
         for difficult in difficult_words:
-            update_batch.append((featurized_words[simple_word],
-                                 featurized_words[difficult]))
+            update_batch.append((featurized_words[difficult], 1))
+            # update_batch.append((featurized_words[simple_word],
+            #                      featurized_words[difficult]))
 
     if update_batch:
+        update_batch = list(zip(*update_batch))
+        # print(help(ranker))
         ranker.update(update_batch)
         ranker.save(user_id)
     else:
