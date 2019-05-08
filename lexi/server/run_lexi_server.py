@@ -13,11 +13,13 @@ from lexi.server.util.database import DatabaseConnection, \
     DatabaseConnectionError
 from werkzeug.exceptions import HTTPException
 
-from lexi.config import LEXI_BASE, LOG_DIR, RANKER_MODEL_PATH_TEMPLATE, \
-    CWI_MODEL_PATH_TEMPLATE, MODELS_DIR, RESOURCES
+from lexi.config import LEXI_BASE, LOG_DIR, RANKER_PATH_TEMPLATE, \
+    CWI_PATH_TEMPLATE, MODELS_DIR, RESOURCES, SCORER_PATH_TEMPLATE,\
+    SCORER_MODEL_PATH_TEMPLATE
 from lexi.core.endpoints import update_ranker
 from lexi.core.simplification.lexical import LexicalSimplificationPipeline, \
-    LexiCWI, LexiRanker, LexiGenerator, LexiFeaturizer, LexiFeaturizer
+    LexiCWI, LexiRanker, LexiGenerator, LexiScorer
+from lexi.core.featurize.featurizers import LexicalFeaturizer
 from lexi.server.util import statuscodes
 from lexi.server.util.html import process_html
 from lexi.server.util.communication import make_response
@@ -122,18 +124,23 @@ simplification_pipeline = LexicalSimplificationPipeline("default")
 generator = LexiGenerator(synonyms_files=RESOURCES["da"]["synonyms"],
                           embedding_files=RESOURCES["da"]["embeddings"])
 simplification_pipeline.setGenerator(generator)
-# default_ranker = load_pickled_model(
-#     RANKER_MODEL_PATH_TEMPLATE.format("default"))
-# default_cwi = load_pickled_model(
-#     CWI_MODEL_PATH_TEMPLATE.format("default"))
 
-featurizer = LexiFeaturizer.staticload("default_featurizer.json")
+default_scorer = LexiScorer.staticload(SCORER_PATH_TEMPLATE.format("default"))
+logger.debug("SCORER PATH: {}".format(default_scorer.path))
+default_ranker = LexiRanker.staticload(RANKER_PATH_TEMPLATE.format("default"))
+default_ranker.set_scorer(default_scorer)
+default_cwi = LexiCWI.staticload(CWI_PATH_TEMPLATE.format("default"))
+default_cwi.set_scorer(default_scorer)
 
-default_ranker = LexiRanker("default", featurizer=featurizer)
-logger.debug("Default Ranker Featurizer: {}".format(default_ranker.featurizer))
-default_cwi = LexiCWI("default", featurizer=featurizer)  # TODO pretrain offline and load
+# default_ranker = LexiRanker("default", scorer=default_scorer)
+# default_cwi = LexiCWI("default", scorer=default_scorer)  # TODO pretrain offline and load
+# default_ranker.save("default")
+# default_cwi.save("default")
+
 personalized_rankers = {"default": default_ranker}
 personalized_cwi = {"default": default_cwi}
+personalized_scorers = {"default": default_scorer}
+
 logger.debug("Default ranker: {} ({})".format(default_ranker,
                                               type(default_ranker)))
 logger.info("Base simplifier loaded.")
@@ -167,8 +174,9 @@ def process():
                 .format(email, website_url))
     logger.debug("Simplification request: {}".format(request.json))
     user_id = db_connection.get_user(email)
-    if not user_id:
+    if not user_id or user_id is None:
         user_id = 1  # default user. TODO issue warning here to user
+    logger.info("User ID: {}".format(user_id))
     request_id = db_connection.insert_session(user_id, website_url,
                                               frontend_version=frontend_version,
                                               language=language)
@@ -212,8 +220,8 @@ def register_user():
     # get fields from request
     email = request.json["email"].lower()
     # pw_hash = request.json["pw_hash"]
-    year_of_birth = request.json["year_of_birth"]
-    education = request.json["education"]
+    year_of_birth = request.json.get("year_of_birth", 1900)
+    education = request.json.get("education", "N/A")
     # get maximum user ID
     logger.info("New user: {}".format([email, year_of_birth, education]))
     user = db_connection.get_user(email)
@@ -223,7 +231,7 @@ def register_user():
         return make_response(statuscodes.EMAIL_ADDRESS_REGISTERED, msg)
     else:
         new_user_id = db_connection.insert_user(email)
-        model_path = RANKER_MODEL_PATH_TEMPLATE.format(new_user_id)
+        model_path = RANKER_PATH_TEMPLATE.format(new_user_id)
         db_connection.insert_model(new_user_id, year_of_birth, education,
                                    model_path, "ranker")
         return make_response(statuscodes.OK, "Registration successful")
@@ -238,7 +246,7 @@ def login_user():
     email = request.json["email"].lower()
     logger.info("Received login request for user {}".format(email))
     user_id = db_connection.get_user(email)
-    if not user_id:
+    if not user_id or user_id is None:
         msg = "Email address {} not found".format(email)
         logger.info(msg)
         return make_response(statuscodes.EMAIL_ADDRESS_NOT_FOUND, msg)
@@ -252,6 +260,10 @@ def login_user():
 def get_feedback():
     email = request.json["email"].lower()
     user_id = db_connection.get_user(email)
+    if not user_id or user_id is None:
+        msg = "User ID not available for email address {}".format(email)
+        logger.error(msg)
+        return make_response(statuscodes.EMAIL_ADDRESS_NOT_FOUND, msg)
     simplifications = request.json.get("simplifications", None)
     feedback_text = request.json.get("feedback_text", "N/A")
     website = request.json.get("url", "N/A")
@@ -269,7 +281,6 @@ def get_feedback():
         logger.debug("Getting ranker for user: {}".format(user_id))
         ranker = get_personalized_ranker(user_id)
         logger.debug("Ranker: {}".format(ranker))
-        logger.debug("  -- Featurizer: {} ({})".format(ranker.featurizer, hasattr(ranker, "featurizer")))
         update_ranker(ranker, user_id, simplifications, rating)
         return make_response(statuscodes.OK, "Feedback successful")
     else:
@@ -305,14 +316,14 @@ def get_personalized_ranker(user_id):
         ranker = personalized_rankers[user_id]
     else:
         logger.info("Gotta load ranker or use default...")
-        # retrieve model
-        # model_path = db_connection.get_model_path(user_id)
-        # ranker = LexiRanker.load(model_path)
-        ranker = LexiRanker(user_id, featurizer=featurizer)
-        # featurizer = ...  # retrieve
-        # ranker.set_featurizer(featurizer)
-        # ranker.featurizer = LexiRankingFeaturizer()
-        ranker.userId = user_id
+        try:
+            # retrieve model
+            path = RANKER_PATH_TEMPLATE.format(user_id)
+            ranker = LexiRanker.staticload(path)
+        except:
+            ranker = copy.copy(personalized_rankers["default"])
+            ranker.set_userId(user_id)
+        ranker.set_scorer(get_personalized_scorer(user_id))
         personalized_rankers[user_id] = ranker
     return ranker
 
@@ -325,16 +336,40 @@ def get_personalized_cwi(user_id):
         logger.info("Gotta load cwi or use default...")
         try:
             # retrieve model
-            model_path = db_connection.get_model_path(user_id)
-            cwi = LexiCWI(user_id, featurizer=featurizer)
+            path = CWI_PATH_TEMPLATE.format(user_id)
+            cwi = LexiCWI.staticload(path)
         except:
             logger.warning("Could not load personalized model. "
                            "Loading default cwi.")
             cwi = copy.copy(personalized_cwi["default"])
             logger.debug(cwi)
-            cwi.userId = user_id
+            cwi.set_userId(user_id)
+        cwi.set_scorer(get_personalized_scorer(user_id))
         personalized_cwi[user_id] = cwi
     return cwi
+
+
+def get_personalized_scorer(user_id):
+    logger.debug("Getting personalized scorer for user {}. In memory? {}".format(user_id, user_id in personalized_scorers))
+    if user_id in personalized_scorers:
+        logger.info("Using personalized scorer, still in memory.")
+        scorer = personalized_scorers[user_id]
+        logger.debug("Scorer Featurizer: {}".format(hasattr(scorer, "featurizer")))
+    else:
+        logger.info("Gotta load scorer or use default...")
+        try:
+            # retrieve model
+            path = SCORER_PATH_TEMPLATE.format(user_id)
+            scorer = LexiScorer.staticload(path)
+        except:
+            logger.warning("Could not load personalized model. "
+                           "Loading default scorer.")
+            path = SCORER_PATH_TEMPLATE.format("default")
+            scorer = LexiScorer.staticload(path)
+            scorer.set_userId(user_id)
+            scorer.model_path = SCORER_MODEL_PATH_TEMPLATE.format(user_id)
+        personalized_scorers[user_id] = scorer
+    return scorer
 
 
 if __name__ == "__main__":

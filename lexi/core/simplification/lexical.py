@@ -1,20 +1,16 @@
 import logging
 import pickle
-import os
 import jsonpickle
 import torch
 
-from lexi.config import LEXICAL_MODEL_PATH_TEMPLATE, RANKER_MODEL_PATH_TEMPLATE
+from lexi.config import LEXICAL_MODEL_PATH_TEMPLATE, RANKER_PATH_TEMPLATE, \
+    SCORER_PATH_TEMPLATE, SCORER_MODEL_PATH_TEMPLATE, CWI_PATH_TEMPLATE
 from lexi.core.simplification import SimplificationPipeline
 from lexi.core.simplification.util import make_synonyms_dict, \
     parse_embeddings
 from lexi.core.featurize.featurizers import LexicalFeaturizer
 from lexi.core.util import util
 from abc import ABCMeta, abstractmethod
-import keras
-from keras.layers import Input, Dense
-from sklearn.feature_extraction import DictVectorizer
-from sklearn.preprocessing import MinMaxScaler
 
 logger = logging.getLogger('lexi')
 
@@ -187,165 +183,92 @@ class LexiSelector:
 
 class LexiPersonalizedPipelineStep(metaclass=ABCMeta):
 
-    def __init__(self, userId=None):
+    def __init__(self, userId=None, scorer=None):
         self.userId = userId
-        self.model = None
+        self.scorer = scorer
+        self.scorer_path = None
 
-    @abstractmethod
-    def fresh_train(self, data):
-        raise NotImplementedError
+    def set_scorer(self, scorer):
+        self.scorer = scorer
+        self.scorer_path = scorer.get_path()
+
+    def set_userId(self, userId):
+        self.userId = userId
 
     @abstractmethod
     def update(self, data):
         raise NotImplementedError
 
-    def save(self, models_path):
-        path_prefix = os.path.join(models_path, self.userId)
-        self.model.save(path_prefix+".model.h5")
-        if hasattr(self, "featurizer") and self.featurizer:
-            self.featurizer.save(path_prefix+".featurizer")
+    def __getstate__(self):
+        """
+        Needed to save pipeline steps using jsonpickle, since this module cannot
+        handle torch models -- we use torch's model saving functionality
+        instead. This is the method used by jsonpickle to get the state of the
+        object when serializing.
+        :return:
+        """
+        state = self.__dict__.copy()
+        del state['scorer']
+        return state
 
-    def load(self, path):
-        self.model = keras.models.load_model(path)
-
-
-# class LexiFeaturizer(DictVectorizer):
-#
-#     def __init__(self):
-#         super().__init__()
-#
-#     def dimensions(self):
-#         return len(self.get_feature_names())
-#         # return 3
-#
-#     def featurize(self, sentence, startOffset, endOffset):
-#         featuredict = dict()
-#         featuredict["word_length"] = endOffset - startOffset
-#         featuredict["sentence_length"] = len(sentence)
-#         self.transform(featuredict)
-#
-#     def save(self, path):
-#         json = jsonpickle.encode(self)
-#         with open(path, "w") as jsonfile:
-#             jsonfile.write(json)
-#
-#     @staticmethod
-#     def staticload(path):
-#         with open(path) as jsonfile:
-#             json = jsonfile.read()
-#         return jsonpickle.decode(json)
+    def __setstate__(self, state):
+        self.__dict__.update(state)
 
 
 class LexiCWI(LexiPersonalizedPipelineStep):
 
-    def __init__(self, userId, featurizer=None):
-        # self.model = self.build_model()
-        super().__init__(userId)
-        self.featurizer = featurizer if featurizer is not None else \
-            LexiFeaturizer()
-        self.model = self.build_model()
-        self.optimizer = torch.optim.Adam(self.model.parameters())
-
-    def build_model(self):
-        return LexiScorerNet(self.featurizer.dimensions(), [10, 10])
-
-    def fresh_train(self, cwi_data):
-        x, y = cwi_data
-        self.model.fit(x, y, self.optimizer)
-
-    def update(self, cwi_data):
-        x, y = cwi_data
-        self.model.fit(x, y, self.optimizer)  # TODO updating like this is problematic if we
-        # want learning rate decay or other things that rely on previous
-        # iterations, those are not saved in the model or optimizer...
+    def __init__(self, userId, scorer=None):
+        super().__init__(userId, scorer)
+        self.cwi_threshold = 0.67
 
     def identify_targets(self, sent, token_offsets):
         return [(wb, we) for wb, we in token_offsets if
                 self.is_complex(sent, wb, we)]
 
     def is_complex(self, sent, startOffset, endOffset):
-        x = self.featurizer.featurize(sent, startOffset, endOffset)
-        logger.debug(x)
-        cwi_score = self.model(x)
-        return cwi_score > 0
+        cwi_score = self.scorer.score(sent, startOffset, endOffset)
+        return cwi_score > self.cwi_threshold
 
+    def set_cwi_threshold(self, threshold):
+        self.cwi_threshold = threshold
 
-class LexiFeaturizer(DictVectorizer):
+    def update(self, data):
+        if self.scorer:
+            self.scorer.update(data)
 
-    def __init__(self):
-        super().__init__(sparse=False)
-        self.scaler = MinMaxScaler()
-
-    def dimensions(self):
-        if hasattr(self, "feature_names_"):
-            return len(self.get_feature_names())
-        else:
-            logger.warning("Asking for vectorizer dimensionality, "
-                           "but vectorizer has not been fit yet. Returning 0.")
-            return 0
-
-    def to_dict(self, sentence, startOffset, endOffset):
-        featuredict = dict()
-        featuredict["word_length"] = endOffset - startOffset
-        featuredict["sentence_length"] = len(sentence)
-        return featuredict
-
-    def fit(self, words_in_context):
-        wic_dicts = [self.to_dict(*wic) for wic in words_in_context]
-        vecs = super().fit_transform(wic_dicts)
-        self.scaler.fit(vecs)
-
-    def featurize(self, sentence, startOffset, endOffset, scale=True):
-        vecs = self.transform(self.to_dict(sentence, startOffset, endOffset))
-        if scale:
-            vecs = self.scaler.transform(vecs)
-        return vecs
-
-    def save(self, path):
+    def save(self, userId):
         json = jsonpickle.encode(self)
-        with open(path, "w") as jsonfile:
+        with open(CWI_PATH_TEMPLATE.format(userId), 'w') as jsonfile:
             jsonfile.write(json)
 
     @staticmethod
     def staticload(path):
         with open(path) as jsonfile:
             json = jsonfile.read()
-        return jsonpickle.decode(json)
+        cwi = jsonpickle.decode(json)
+        if hasattr(cwi, "scorer_path") and cwi.scorer_path is not None:
+            cwi.set_scorer(LexiScorer.staticload(cwi.scorer_path))
+        else:
+            logger.warn("Ranker file does not provide link to a scorer. Set "
+                        "manually with ranker.set_scorer()!")
+        return cwi
 
 
 class LexiRanker(LexiPersonalizedPipelineStep):
 
-    def __init__(self, userId, featurizer=None):
-        super().__init__(userId)
-        self.featurizer = featurizer or LexiFeaturizer()
-        self.model = self.build_model()
-        self.optimizer = torch.optim.Adam(self.model.parameters())
+    def __init__(self, userId, scorer=None):
+        super().__init__(userId, scorer)
 
-    def build_model(self):
-        return LexiScorerNet(self.featurizer.dimensions(), [10, 10])
-
-    def fresh_train(self, data):
-        x, y = data
-        self.model.fit(x, y, self.optimizer)
-
-    def update(self, cwi_data):
-        x, y = cwi_data
-        x = torch.Tensor(x)
-        y = torch.Tensor(y)
-        self.model.fit(x, y, self.optimizer)  # TODO updating like this is
-        # problematic if we want learning rate decay or other things that rely
-        # on previous iterations, those are not saved in the model or optimizer...
-
-    def set_featurizer(self, featurizer):
-        self.featurizer = featurizer
+    def update(self, data):
+        if self.scorer is not None:
+            self.scorer.update(data)
 
     def rank(self, candidates, sentence=None, wb=0, we=0):
         scored_candidates = []
         for candidate in candidates:
             modified_sentence = sentence[:wb] + candidate + sentence[we:]
-            x = self.featurizer.featurize(modified_sentence, wb,
-                                          wb + len(candidate))
-            score = self.model.forward(x)
+            score = self.scorer.score(modified_sentence, wb,
+                                      wb + len(candidate))
             scored_candidates.append((candidate, score))
             logger.debug("Sorted candidates: {}".format(scored_candidates))
         return [candidate for candidate, score in sorted(scored_candidates,
@@ -353,24 +276,95 @@ class LexiRanker(LexiPersonalizedPipelineStep):
 
     def save(self, userId):
         json = jsonpickle.encode(self)
-        with open(RANKER_MODEL_PATH_TEMPLATE.format(userId), 'w') as jsonfile:
+        with open(RANKER_PATH_TEMPLATE.format(userId), 'w') as jsonfile:
             jsonfile.write(json)
+        self.scorer.save()
 
     @staticmethod
     def staticload(path):
         with open(path) as jsonfile:
             json = jsonfile.read()
-        return jsonpickle.decode(json)
+        ranker = jsonpickle.decode(json)
+        if hasattr(ranker, "scorer_path") and ranker.scorer_path is not None:
+            ranker.set_scorer(LexiScorer.staticload(ranker.scorer_path))
+        else:
+            logger.warn("Ranker file does not provide link to a scorer. Set "
+                        "manually with ranker.set_scorer()!")
+        return ranker
 
-    def train(self, data, batch_size=64, lr=1e-3,
-                    epochs=30, dev=None, clip=None, early_stopping=None,
-                    l2=1e-5, lr_schedule=None):
 
-        loss = 0
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr,
-                                     weight_decay=l2)
-        for input1, input2 in data:
-            pass  # TODO
+class LexiScorer:
+    def __init__(self, userId, featurizer, hidden_dims):
+        self.userId = userId
+        self.path = SCORER_PATH_TEMPLATE.format(userId)
+        self.featurizer = featurizer
+        self.hidden_dims = hidden_dims
+        self.model = self.build_model()
+        self.model_path = SCORER_MODEL_PATH_TEMPLATE.format(self.userId)
+        self.optimizer = torch.optim.Adam(self.model.parameters())
+        self.update_steps = 0
+        self.cache = {}
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['model'], state['cache']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.cache = {}
+        self.model = self.build_model()
+
+    def get_path(self):
+        return SCORER_PATH_TEMPLATE.format(self.userId)
+
+    def set_userId(self, userId):
+        self.userId = userId
+        self.path = SCORER_PATH_TEMPLATE.format(userId)
+
+    def build_model(self):
+        return LexiScorerNet(self.featurizer.dimensions(), self.hidden_dims)
+
+    def train_model(self, x, y):
+        self.model.fit(torch.Tensor(x), torch.Tensor(y), self.optimizer)
+
+    def update(self, data):
+        # TODO do this in one batch (or several batches of more than 1 item...)
+        for (sentence, start_offset, end_offset), label in data:
+            x = self.featurizer.featurize(sentence, start_offset, end_offset)
+            self.model.fit(x, label, self.optimizer)
+            self.update_steps += 1
+
+    def score(self, sent, start_offset, end_offset):
+        cached = self.cache.get((sent, start_offset, end_offset))
+        if cached is not None:
+            return cached
+        self.model.eval()
+        x = self.featurizer.featurize(sent, start_offset, end_offset)
+        score = float(self.model.forward(x))
+        self.cache[(sent, start_offset, end_offset)] = score
+        return score
+
+    def save(self):
+        # save state of this object, except model (excluded in __getstate__())
+        with open(self.get_path(), 'w') as f:
+            json = jsonpickle.encode(self)
+            f.write(json)
+        # save model
+        torch.save({
+            'model_state_dict': self.model.state_dict()
+        }, self.model_path)
+
+    @staticmethod
+    def staticload(path):
+        with open(path) as jsonfile:
+            json = jsonfile.read()
+        scorer = jsonpickle.decode(json)
+        scorer.cache = {}
+        scorer.model = scorer.build_model()
+        checkpoint = torch.load(scorer.model_path)
+        scorer.model.load_state_dict(checkpoint['model_state_dict'])
+        return scorer
 
 
 class LexiScorerNet(torch.nn.Module):
@@ -389,29 +383,16 @@ class LexiScorerNet(torch.nn.Module):
             h = torch.relu(layer(h))
         return self.out(h)
 
-    def fit(self, x, y, optimizer, epochs=1):
+    def fit(self, x, y, optimizer, epochs=100):
         for _ in range(epochs):
             self.train()
             # optimizer.zero_grad()
             pred = self.forward(x)
             # loss = torch.sqrt(torch.mean((y - pred) ** 2))
             loss = torch.mean((y - pred))
+            print(loss)
             loss.backward()
             optimizer.step()
-
-
-class RankerNet(torch.nn.Module):
-    def __init__(self, input_size, hidden_sizes):
-        super(RankerNet, self).__init__()
-        self.input = torch.nn.Linear(input_size, hidden_sizes[0])
-        self.out = torch.nn.Linear(hidden_sizes[0] * 2, 1)
-
-    def forward(self, input1, input2):
-        l = self.input(torch.Tensor(input1))
-        r = self.input(torch.Tensor(input2))
-        combined = torch.cat((l.view(-1), r.view(-1)))
-        return self.out(combined)
-
 
 
 class DummyLexicalSimplificationPipeline(SimplificationPipeline):

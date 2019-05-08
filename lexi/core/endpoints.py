@@ -181,10 +181,9 @@ def update_ranker(ranker, user_id, feedback, overall_rating=0):
     :return:
     """
     update_batch = []
-    featurized_words = {}
 
     logger.debug("Updating ranker: {}".format(ranker))
-    logger.debug("Ranker has featurizer: {}".format(ranker.featurizer))
+    logger.debug("Ranker has featurizer: {}".format(ranker.scorer.featurizer))
 
     # iterate over feedback items (user choices for simplified words)
     for _, simplification in feedback.items():
@@ -207,35 +206,27 @@ def update_ranker(ranker, user_id, feedback, overall_rating=0):
         original_sentence = simplification.get("sentence")
         original_start_offset = simplification.get("word_offset_start")
         original_end_offset = simplification.get("word_offset_end")
-        for w in choices:
-            if w not in featurized_words:
-                # construct modified sentence
-                modified_sentence = "{}{}{}".format(
-                    original_sentence[:original_start_offset],
-                    w,
-                    original_sentence[original_end_offset:])
-                # featurize word in modified context
-                logger.debug("Word in modified context: {} {} {} {}".format(
-                    modified_sentence, w, original_start_offset,
-                    original_start_offset+len(w)))
-                featurized_words[w] = ranker.featurizer.featurize(
-                    modified_sentence, original_start_offset,
-                    original_start_offset+len(w))
 
         simple_index = selection % len(choices)
         simple_word = choices[simple_index]
-        difficult_words = [w for w in choices if not w == simple_word]
 
-        # add feature vectors to update batch
-        update_batch.append((featurized_words[simple_word], 0))
-        for difficult in difficult_words:
-            update_batch.append((featurized_words[difficult], 1))
-            # update_batch.append((featurized_words[simple_word],
-            #                      featurized_words[difficult]))
+        for w in choices:
+            # construct modified sentence
+            modified_sentence = "{}{}{}".format(
+                original_sentence[:original_start_offset],
+                w,
+                original_sentence[original_end_offset:])
+
+            # put modified sentences into update batch (list of tuples
+            # (items, label), where items are 3-tuples
+            # (modified_sent, start_offset, end_offset))
+            update_batch.append((
+                (modified_sentence,      # item
+                 original_start_offset,
+                 original_start_offset + len(w)),
+                int(w != simple_word)))  # label: 0 if w simple, 1 if difficult
 
     if update_batch:
-        update_batch = list(zip(*update_batch))
-        # print(help(ranker))
         ranker.update(update_batch)
         ranker.save(user_id)
     else:
