@@ -116,6 +116,15 @@ def process_html_lexical(pipeline, html, startOffset, endOffset, cwi, ranker,
     # output is a sequence of tokens including whitespaces, id2simplification
     # is a dict mapping token IDs to simplifications, if applicable
     offset2html, pure_text = util.filter_html(html)
+
+    # check if this is a single-word request. If so, do not provide CWI module
+    # such that the word will be regarded as difficult
+    if ' ' not in pure_text[startOffset:endOffset]:
+        logger.info("Single-word request: '{}', at character offsets {} to {} "
+                    "in text: {}".format(pure_text[startOffset:endOffset],
+                                         startOffset, endOffset, pure_text))
+        cwi = None
+
     offset2simplification = pipeline.simplify_text(
         pure_text, startOffset, endOffset, cwi=cwi, ranker=ranker,
         min_similarity=min_similarity, blacklist=blacklist)

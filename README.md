@@ -3,6 +3,11 @@
 ## Changelog
 
 
+### Version 0.3.1
++ restructured simplification pipeline: ranker and CWI use common scoring class
++ single-word requests always pass through CWI
++ featurizers still very POC, next step is to implement strong models
+
 ### Version 0.3
 + no more pickling!
 + POS-based synonym selection
