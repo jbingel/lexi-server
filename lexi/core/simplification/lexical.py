@@ -301,7 +301,8 @@ class LexiScorer:
         self.hidden_dims = hidden_dims
         self.model = self.build_model()
         self.model_path = SCORER_MODEL_PATH_TEMPLATE.format(self.userId)
-        self.optimizer = torch.optim.Adam(self.model.parameters())
+        self.optimizer = torch.optim.SGD(self.model.parameters(), lr=3e-3)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), amsgrad=True)
         self.update_steps = 0
         self.cache = {}
 
@@ -325,8 +326,9 @@ class LexiScorer:
     def build_model(self):
         return LexiScorerNet(self.featurizer.dimensions(), self.hidden_dims)
 
-    def train_model(self, x, y):
-        self.model.fit(torch.Tensor(x), torch.Tensor(y), self.optimizer)
+    def train_model(self, x, y, epochs=10, patience=5):
+        self.model.fit(torch.Tensor(x), torch.Tensor(y), self.optimizer, epochs,
+                       patience)
 
     def update(self, data):
         # TODO do this in one batch (or several batches of more than 1 item...)
@@ -344,6 +346,9 @@ class LexiScorer:
         score = float(self.model.forward(x))
         self.cache[(sent, start_offset, end_offset)] = score
         return score
+
+    def predict(self, x):
+        return [float(self.model.forward(xi)) for xi in x]
 
     def save(self):
         # save state of this object, except model (excluded in __getstate__())
@@ -370,29 +375,64 @@ class LexiScorer:
 class LexiScorerNet(torch.nn.Module):
     def __init__(self, input_size, hidden_sizes):
         super(LexiScorerNet, self).__init__()
-        self.input = torch.nn.Linear(input_size, hidden_sizes[0])
-        self.hidden_layers = [torch.nn.Linear(hidden_sizes[i],
-                                              hidden_sizes[i+1])
-                              for i in range(len(hidden_sizes)-1)]
-        self.out = torch.nn.Linear(hidden_sizes[-1], 1)
+        if hidden_sizes:
+            self.input = torch.nn.Linear(input_size, hidden_sizes[0])
+            self.hidden_layers = [torch.nn.Linear(hidden_sizes[i],
+                                                  hidden_sizes[i + 1])
+                                  for i in range(len(hidden_sizes) - 1)]
+            self.out = torch.nn.Linear(hidden_sizes[-1], 1)
+        else:
+            self.input = torch.nn.Linear(input_size, 1)
+            self.out = lambda x: x
+            self.hidden_layers = []
+        # self.apply(self.init_weights)
+        # self.apply(torch.nn.init.xavier_normal_)
+        # self.lossfunc = torch.nn.functional.binary_cross_entropy_with_logits
+
+    @staticmethod
+    def init_weights(m):
+        if type(m) == torch.nn.Linear:
+            m.weight.data.fill_(0.5)
+            m.bias.data.fill_(0.5)
 
     def forward(self, x):
         x = torch.Tensor(x)
-        h = torch.relu(self.input(x))
+        h = torch.sigmoid(self.input(x))
         for layer in self.hidden_layers:
-            h = torch.relu(layer(h))
-        return self.out(h)
+            h = torch.torch.nn.functional.relu(layer(h))
+        return torch.sigmoid(self.out(h))
 
-    def fit(self, x, y, optimizer, epochs=100):
+    def fit(self, x, y, optimizer, epochs=100, patience=10):
+        optimizer.zero_grad()
+        best_loss = 1000
+        best_model = None
+        no_improvement_for = 0
         for _ in range(epochs):
             self.train()
-            # optimizer.zero_grad()
             pred = self.forward(x)
             # loss = torch.sqrt(torch.mean((y - pred) ** 2))
-            loss = torch.mean((y - pred))
+            loss = torch.mean(torch.abs(y-pred))
+            # loss = self.lossfunc(pred, y)
+            # loss = torch.mean((y - pred))
+
+            if loss < best_loss:
+                best_loss = loss
+                best_model = self.state_dict()
+                no_improvement_for = 0
+            else:
+                no_improvement_for += 1
+                if no_improvement_for == patience:
+                    print("BEST LOSS: {}".format(float(best_loss)))
+                    print("current params:")
+                    print(list(self.parameters()))
+                    self.load_state_dict(best_model)
+                    print("best params, loaded:")
+                    print(list(self.parameters()))
+                    return
             print(loss)
             loss.backward()
             optimizer.step()
+            # print(list(self.parameters()))
 
 
 class DummyLexicalSimplificationPipeline(SimplificationPipeline):

@@ -19,11 +19,9 @@ from lexi.config import LEXI_BASE, LOG_DIR, RANKER_PATH_TEMPLATE, \
 from lexi.core.endpoints import update_ranker
 from lexi.core.simplification.lexical import LexicalSimplificationPipeline, \
     LexiCWI, LexiRanker, LexiGenerator, LexiScorer
-from lexi.core.featurize.featurizers import LexicalFeaturizer
 from lexi.server.util import statuscodes
 from lexi.server.util.html import process_html
 from lexi.server.util.communication import make_response
-# from lexi.lib.lib import OnlineRegressionRanker
 
 SCRIPTDIR = os.path.dirname(os.path.realpath(__file__))
 
@@ -131,11 +129,6 @@ default_ranker = LexiRanker.staticload(RANKER_PATH_TEMPLATE.format("default"))
 default_ranker.set_scorer(default_scorer)
 default_cwi = LexiCWI.staticload(CWI_PATH_TEMPLATE.format("default"))
 default_cwi.set_scorer(default_scorer)
-
-# default_ranker = LexiRanker("default", scorer=default_scorer)
-# default_cwi = LexiCWI("default", scorer=default_scorer)  # TODO pretrain offline and load
-# default_ranker.save("default")
-# default_cwi.save("default")
 
 personalized_rankers = {"default": default_ranker}
 personalized_cwi = {"default": default_cwi}
@@ -269,7 +262,7 @@ def get_feedback():
     website = request.json.get("url", "N/A")
     # request_id = request.json.get("request_id", -1)
     rating = request.json.get("rating", 0)
-    logger.info("Received feedback from user {}, rating {} for site {}.\n"
+    logger.info("Received feedback from user {}, rating {} for site {}. "
                 "Feedback text: {}".format(email, rating, website,
                                            feedback_text))
     logger.debug("Request: {}".format(request.json))
