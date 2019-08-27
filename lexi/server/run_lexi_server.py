@@ -26,19 +26,19 @@ from lexi.server.util.communication import make_response
 SCRIPTDIR = os.path.dirname(os.path.realpath(__file__))
 
 # ARG PARSING
-description = "Run a Lexi server."
-parser = argparse.ArgumentParser(description=description)
-parser.add_argument('-S', '--disable-ssl',
-                    action="store_true",
-                    default=False,
-                    help="Whether to disable SSL connection (e.g. "
-                         "when developing on localhost).")
-parser.add_argument('-l', '--log-level',
-                    dest="log_level",
-                    choices=('error', 'info', 'debug'),
-                    default='info',
-                    help='Logging verbosity level')
-args = parser.parse_args()
+# description = "Run a Lexi server."
+# parser = argparse.ArgumentParser(description=description)
+# parser.add_argument('-S', '--disable-ssl',
+#                     action="store_true",
+#                     default=False,
+#                     help="Whether to disable SSL connection (e.g. "
+#                          "when developing on localhost).")
+# parser.add_argument('-l', '--log-level',
+#                     dest="log_level",
+#                     choices=('error', 'info', 'debug'),
+#                     default='info',
+#                     help='Logging verbosity level')
+# args = parser.parse_args()
 
 os.makedirs(MODELS_DIR, exist_ok=True)
 
@@ -78,7 +78,8 @@ fs = cfg.read(LEXI_BASE+"/lexi.cfg")
 
 # DB CONNECTION
 db_params = {
-    "dbname": cfg["postgres"]["dbname"],
+    "type": cfg["postgres"]["type"],
+    "name": cfg["postgres"]["dbname"],
     "user": cfg["postgres"]["user"],
     "host": cfg["postgres"].get("host"),
     "port": int(cfg["postgres"]["port"])
@@ -97,9 +98,11 @@ while not db_connected:
     try:
         db_connection = DatabaseConnection(db_params)
         db_connected = True
-    except DatabaseConnectionError:
-        logger.error("Couldn't connect to database. "
-                     "Password wrong or not set?")
+    except DatabaseConnectionError as e:
+        logger.error("Couldn't connect to database. ({}) "
+                     "Password wrong or not set?".format(e))
+        import traceback
+        logger.error(traceback.print_tb(e.__traceback__))
         pw = getpass.getpass("Type database password: ")
         db_params["password"] = pw
 
@@ -318,6 +321,8 @@ def get_personalized_ranker(user_id):
             ranker.set_userId(user_id)
         ranker.set_scorer(get_personalized_scorer(user_id))
         personalized_rankers[user_id] = ranker
+    logger.info("Rankers in memory for users: {} (total number of {}).".format(
+        list(personalized_rankers.keys()), len(personalized_rankers)))
     return ranker
 
 

@@ -40,7 +40,7 @@ def make_synonyms_dict(synonyms_file):
     """
     from collections import defaultdict
     words2synonyms = defaultdict(set)
-    for line in open(synonyms_file):
+    for line in open(synonyms_file, encoding='utf8'):
         tgt, syns = line.strip().split("\t", 1)
         words2synonyms[tgt].update(syns.split(";"))
     return words2synonyms

@@ -1,7 +1,7 @@
 import psycopg2
 import logging
 import json
-# import MySQLdb
+import mysql.connector
 from collections import defaultdict
 
 logger = logging.getLogger('lexi')
@@ -9,15 +9,31 @@ logger = logging.getLogger('lexi')
 
 class DatabaseConnection:
 
-    def __init__(self, kwargs, type="postgres"):
+    def __init__(self, kwargs):
+        dbtype = kwargs.get("type", "postgres")
         try:
-            if type == "postgres":
-                self.pg_connection = psycopg2.connect(**kwargs)
-            # elif type == "mysql":
-            #     self.pg_connection = MySQLdb.connect(**kwargs)
-            self.cursor = self.pg_connection.cursor()
+            logger.info(dbtype)
+            if dbtype == "postgres":
+                args = {
+                    "dbname": kwargs["name"],
+                    "port": kwargs["port"],
+                    "user": kwargs["user"],
+                    "host": kwargs["host"],
+                    "password": kwargs["password"]
+                }
+                self.pg_connection = psycopg2.connect(**args)
+            elif dbtype == "mysql":
+                args = {
+                    "database": kwargs["name"],
+                    "port": kwargs["port"],
+                    "user": kwargs["user"],
+                    "host": kwargs["host"],
+                    "password": kwargs["password"]
+                }
+                self.pg_connection = mysql.connector.connect(**args)
+            self.cursor = self.pg_connection.cursor(buffered=True)
             logger.info("Connected to database '{}' at '{}'.".format(
-                kwargs["dbname"], kwargs["host"]
+                kwargs["name"], kwargs["host"]
             ))
         except psycopg2.OperationalError:
             raise DatabaseConnectionError("Lexi could not connect.")
@@ -76,11 +92,6 @@ class DatabaseConnection:
             query = "INSERT INTO blacklist " \
                     "(user_id, item) VALUES ('{}', '{}');".format(user_id, item)
             self.execute_and_commit(query)
-
-    # def update_last_login(self, user_id):
-    #     query = "UPDATE users SET last_login=now(), num_logins=num_logins+1 " \
-    #             "WHERE user_id={}".format(user_id)
-    #     self.execute_and_commit(query)
 
     def get_model_path(self, user_id):
         query = "SELECT model_file FROM models WHERE user_id ={}".format(

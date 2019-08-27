@@ -249,7 +249,7 @@ class LexiCWI(LexiPersonalizedPipelineStep):
         if hasattr(cwi, "scorer_path") and cwi.scorer_path is not None:
             cwi.set_scorer(LexiScorer.staticload(cwi.scorer_path))
         else:
-            logger.warn("Ranker file does not provide link to a scorer. Set "
+            logger.warn("CWI file does not provide link to a scorer. Set "
                         "manually with ranker.set_scorer()!")
         return cwi
 
@@ -342,7 +342,8 @@ class LexiScorer:
         if cached is not None:
             return cached
         self.model.eval()
-        x = self.featurizer.featurize(sent, start_offset, end_offset)
+        item = (sent[start_offset:end_offset], sent, start_offset, end_offset)
+        x = self.featurizer.featurize([item])[0]
         score = float(self.model.forward(x))
         self.cache[(sent, start_offset, end_offset)] = score
         return score
