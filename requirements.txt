@@ -6,7 +6,7 @@ chardet==3.0.4
 Click==7.0
 docutils==0.15.2
 Flask==1.1.1
-Flask-Cors==3.0.7
+Flask-Cors==3.0.9
 Flask-SSLify==0.1.5
 gensim==2.3.0
 idna==2.8
