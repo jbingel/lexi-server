@@ -17,7 +17,7 @@ jsonpickle==1.1
 MarkupSafe==1.1.1
 mysql-connector-python==8.0.16
 nltk==3.4
-numpy==1.17.0
+numpy==1.22.0
 protobuf==3.9.1
 psycopg2==2.7.7
 python-dateutil==2.8.0
